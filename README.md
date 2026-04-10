@@ -24,6 +24,7 @@ olist-payment-analytics/
 │   └── olist_payment_analytics.ipynb   # Main analysis notebook
 │
 ├── src/
+│   ├── __init__.py               # Public exports for reusable project utilities
 │   ├── data_loader.py             # Dataset loading & merging utilities
 │   ├── feature_engineering.py     # Feature creation (delivery_delta, etc.)
 │   ├── model.py                   # ML training & evaluation
@@ -89,7 +90,12 @@ All EDA is done in Python using **Plotly** for interactive visualizations:
 
 **Target variable:** Binary satisfaction label — `high` (4–5 stars) vs `low` (1–3 stars)
 
-**Input features:** `payment_type` (one-hot), `payment_installments`, `price`, `freight_value`, `delivery_delta`, `is_late`, `total_order_value`, `customer_lifetime_orders`
+**Input features:** `payment_type` (one-hot), `payment_installments`, `total_price`, `total_freight`, `delivery_delta`, `is_late`, `total_order_value`, `customer_lifetime_orders`
+
+Two feature scopes are supported in code:
+
+- `post_delivery` for post-purchase recovery targeting, where delivery outcome features such as `delivery_delta` and `is_late` are allowed
+- `pre_delivery` for earlier prediction without delivery leakage
 
 **Models trained:**
 
@@ -99,11 +105,20 @@ All EDA is done in Python using **Plotly** for interactive visualizations:
 | Random Forest | Ensemble benchmark |
 | XGBoost | Primary model |
 
-**Evaluation:** F1-score and AUC-ROC (accuracy avoided due to class imbalance — ~57% 5-star reviews).
+**Evaluation:** AUC-ROC plus threshold-tuned F1, with model ranking driven by **low-satisfaction F1** and recall rather than raw accuracy. The decision threshold is tuned on a validation split to improve detection of at-risk customers.
 
 **Interpretability:** SHAP values are used to show the directional impact of each feature on predicted satisfaction, going beyond a simple feature importance bar chart.
 
 **Customer segmentation:** K-Means clustering on payment and delivery behavior to identify distinct customer risk profiles (e.g., high-value reliable payers, installment-heavy late-delivery risk).
+
+**Risk output:** The workflow also produces a ranked customer/order risk table with predicted low-satisfaction probability and risk bands (`low`, `medium`, `high`) for downstream retention actions.
+
+**Cost-sensitive variant:** The project now includes a reusable VIP-weighted XGBoost training utility (`train_vip_weighted_xgboost`) that applies `sample_weight` to prioritize high-value segments and reduce expensive false negatives.
+
+**Operational outputs:**
+
+- `build_revenue_at_risk_table` + `build_revenue_at_risk_map` to prioritize states where high-value late deliveries concentrate.
+- `prepare_intervention_payload` to export enriched email-agent input with personalization fields (including product category, delay metrics, value tier, risk %, and recommended coupon).
 
 ### 5. GenAI Customer Recovery Agent
 
@@ -143,22 +158,28 @@ Credentials can be downloaded from your [Kaggle account settings](https://www.ka
 
 ### API key (for GenAI component)
 
-Set your Anthropic API key as an environment variable:
+Set your OpenAI API key as an environment variable:
 
 ```bash
-export ANTHROPIC_API_KEY="your_key_here"
+export OPENAI_API_KEY="your_key_here"
 ```
 
 ---
 
 ## Key Findings
 
-*(To be completed after full analysis)*
+Latest notebook run (src workflow) produced the following results:
 
-- [ ] Does payment method (credit card vs boleto) correlate with review score?
-- [ ] Do higher installment counts predict lower satisfaction?
-- [ ] Is delivery delta the dominant predictor of churn risk?
-- [ ] Which Brazilian states show the highest late-delivery rates?
+- **Best classifier:** XGBoost ranked first for low-satisfaction detection (`f1_low_satisfaction=0.422`, `recall_low_satisfaction=0.461`, `roc_auc=0.678`) with a tuned decision threshold of `0.79`.
+- **Risk concentration:** Most orders are low risk, but a meaningful at-risk group exists: `89,958` low-risk, `1,507` medium-risk, and `4,358` high-risk orders.
+- **Top retention target segment:** Segment `1` (`late-delivery risk | satisfaction risk`) shows the highest low-satisfaction rate at about `65.6%` across `7,604` orders.
+- **Most influential model drivers (SHAP):** `delivery_delta`, `total_freight`, and `is_late` are among the strongest predictors, indicating delivery performance has a larger impact than payment dummies alone.
+- **Payment behavior signal:** Payment-related features (installments and payment-method dummies) contribute to prediction, but with smaller effect size than delivery-related variables.
+- **VIP-weighted training improved business risk handling:** compared to baseline XGBoost, low-satisfaction recall increased (`0.461 -> 0.485`) and VIP false-negative revenue decreased (`126,369.57 -> 120,304.93`).
+- **Revenue-at-risk map surfaced code-red geographies for high-value late deliveries:** in the latest run, the largest revenue-at-risk concentrations were in `SP` and `RJ`.
+- **Intervention export is production-ready:** `4,358` high-risk delayed-shipping orders were exported to `outputs/intervention/intervention_payload_high_risk_late.csv` with personalization metadata for the email agent.
+
+Note: state-level late-delivery rankings are available in the interactive dashboard section of the notebook and can be exported as a separate table if needed.
 
 ---
 
