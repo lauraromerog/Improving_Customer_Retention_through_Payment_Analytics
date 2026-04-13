@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pickle
 import warnings
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,7 @@ POST_DELIVERY_NUMERIC_FEATURES = [
     "total_price",
     "total_freight",
     "delivery_delta",
+    "delivery_speed_days",
     "is_late",
     "total_order_value",
     "customer_lifetime_orders",
@@ -153,15 +155,15 @@ def _optimize_decision_threshold(
             {
                 "decision_threshold": float(threshold),
                 "f1_low_satisfaction": f1_score(
-                    y_true, predicted_high, pos_label=0, zero_division=0
+                    y_true, predicted_high, pos_label=0, zero_division=0  # type: ignore[call-overload]
                 ),
                 "recall_low_satisfaction": recall_score(
-                    y_true, predicted_high, pos_label=0, zero_division=0
+                    y_true, predicted_high, pos_label=0, zero_division=0  # type: ignore[call-overload]
                 ),
                 "precision_low_satisfaction": precision_score(
-                    y_true, predicted_high, pos_label=0, zero_division=0
+                    y_true, predicted_high, pos_label=0, zero_division=0  # type: ignore[call-overload]
                 ),
-                "f1_macro": f1_score(y_true, predicted_high, average="macro", zero_division=0),
+                "f1_macro": f1_score(y_true, predicted_high, average="macro", zero_division=0),  # type: ignore[call-overload]
             }
         )
 
@@ -177,6 +179,60 @@ def _optimize_decision_threshold(
     best_row = {str(key): value for key, value in threshold_summary.iloc[0].to_dict().items()}
     best_row["threshold_summary"] = threshold_summary.reset_index(drop=True)
     return best_row
+
+
+def compute_cv_metrics(
+    X: pd.DataFrame,
+    y: pd.Series,
+    n_splits: int = 5,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Run stratified k-fold CV and report mean ± std metrics for all three models.
+
+    Use this alongside train_satisfaction_models to get variance estimates and
+    confirm that hold-out results generalise across folds.
+    """
+
+    from sklearn.model_selection import StratifiedKFold, cross_validate
+    from sklearn.metrics import make_scorer
+
+    _y = np.asarray(y, dtype=int)
+    n_neg = int((_y == 0).sum())
+    n_pos = int((_y == 1).sum())
+    scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1.0
+
+    model_specs = _build_model_specs(random_state=random_state, scale_pos_weight=scale_pos_weight)
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+    scoring = {
+        "roc_auc": "roc_auc",
+        "f1_low": make_scorer(f1_score, pos_label=0, zero_division=0),
+        "recall_low": make_scorer(recall_score, pos_label=0, zero_division=0),
+        "precision_low": make_scorer(precision_score, pos_label=0, zero_division=0),
+    }
+
+    rows = []
+    for model_name, model_spec in model_specs.items():
+        cv_results = cross_validate(model_spec, X, y, cv=cv, scoring=scoring, n_jobs=1)
+        rows.append(
+            {
+                "model": model_name,
+                "cv_roc_auc_mean": round(cv_results["test_roc_auc"].mean(), 4),
+                "cv_roc_auc_std": round(cv_results["test_roc_auc"].std(), 4),
+                "cv_f1_low_mean": round(cv_results["test_f1_low"].mean(), 4),
+                "cv_f1_low_std": round(cv_results["test_f1_low"].std(), 4),
+                "cv_recall_low_mean": round(cv_results["test_recall_low"].mean(), 4),
+                "cv_recall_low_std": round(cv_results["test_recall_low"].std(), 4),
+                "cv_precision_low_mean": round(cv_results["test_precision_low"].mean(), 4),
+                "cv_precision_low_std": round(cv_results["test_precision_low"].std(), 4),
+            }
+        )
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("cv_f1_low_mean", ascending=False)
+        .reset_index(drop=True)
+    )
 
 
 def prepare_satisfaction_dataset(
@@ -217,7 +273,7 @@ def prepare_satisfaction_dataset(
     y = modeling_df[target_col].astype(int).copy()
 
     result = {
-        "data": modeling_df if keep_original_columns else pd.concat([X, y.rename(target_col)], axis=1),
+        "data": modeling_df if keep_original_columns else pd.concat([X, y.to_frame(name=target_col)], axis=1),
         "X": X,
         "y": y,
         "feature_columns": feature_columns,
@@ -228,7 +284,10 @@ def prepare_satisfaction_dataset(
     return result
 
 
-def _build_model_specs(random_state: int = 42) -> dict[str, Any]:
+def _build_model_specs(
+    random_state: int = 42,
+    scale_pos_weight: float = 1.0,
+) -> dict[str, Any]:
     if XGBClassifier is None:
         raise ImportError(
             "xgboost is not installed in the active environment. "
@@ -256,12 +315,21 @@ def _build_model_specs(random_state: int = 42) -> dict[str, Any]:
             random_state=random_state,
             n_jobs=1,
         ),
+        # Regularisation (min_child_weight, gamma, reg_alpha, reg_lambda) reduces
+        # overfitting on noisy order-level data. scale_pos_weight compensates for
+        # the ~3:1 high-satisfaction / low-satisfaction class imbalance the same
+        # way class_weight="balanced" does for sklearn estimators.
         "XGBoost": XGBClassifier(
             n_estimators=400,
-            max_depth=5,
+            max_depth=4,
             learning_rate=0.05,
             subsample=0.8,
             colsample_bytree=0.8,
+            min_child_weight=10,
+            gamma=0.1,
+            reg_alpha=0.1,
+            reg_lambda=2.0,
+            scale_pos_weight=scale_pos_weight,
             objective="binary:logistic",
             eval_metric="auc",
             random_state=random_state,
@@ -281,22 +349,30 @@ def train_satisfaction_models(
 ) -> dict[str, Any]:
     """Train the three requested classifiers and return tidy evaluation outputs."""
 
-    X_train_full, X_test, y_train_full, y_test = train_test_split(
-        X,
-        y,
-        test_size=test_size,
-        stratify=y,
-        random_state=random_state,
-    )
-    X_train, X_valid, y_train, y_valid = train_test_split(
-        X_train_full,
-        y_train_full,
-        test_size=validation_size,
-        stratify=y_train_full,
-        random_state=random_state,
-    )
+    _s1 = train_test_split(X, y, test_size=test_size, stratify=y, random_state=random_state)
+    X_train_full = cast(pd.DataFrame, _s1[0])
+    X_test       = cast(pd.DataFrame, _s1[1])
+    y_train_full = cast(pd.Series,    _s1[2])
+    y_test       = cast(pd.Series,    _s1[3])
 
-    model_specs = _build_model_specs(random_state=random_state)
+    _s2 = train_test_split(
+        X_train_full, y_train_full,
+        test_size=validation_size, stratify=y_train_full, random_state=random_state,
+    )
+    X_train = cast(pd.DataFrame, _s2[0])
+    X_valid = cast(pd.DataFrame, _s2[1])
+    y_train = cast(pd.Series,    _s2[2])
+    y_valid = cast(pd.Series,    _s2[3])
+
+    # Compute class-imbalance ratio so XGBoost is calibrated the same way
+    # sklearn estimators are when using class_weight="balanced".
+    # Cast via numpy so the comparison always returns ndarray[bool], not bool.
+    _y_full = np.asarray(y_train_full, dtype=int)
+    n_neg = int((_y_full == 0).sum())
+    n_pos = int((_y_full == 1).sum())
+    scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1.0
+
+    model_specs = _build_model_specs(random_state=random_state, scale_pos_weight=scale_pos_weight)
     models: dict[str, Any] = {}
     metrics_rows: list[dict[str, Any]] = []
     prediction_frames: list[pd.DataFrame] = []
@@ -305,7 +381,7 @@ def train_satisfaction_models(
     threshold_payload: dict[str, dict[str, Any]] = {}
 
     for model_name, model_spec in model_specs.items():
-        threshold_model = clone(model_spec)
+        threshold_model: Any = clone(model_spec)
         threshold_model.fit(X_train, y_train)
         valid_high_prob = threshold_model.predict_proba(X_valid)[:, 1]
 
@@ -314,7 +390,7 @@ def train_satisfaction_models(
             threshold_details["decision_threshold"] if tune_thresholds else 0.5
         )
 
-        model = clone(model_spec)
+        model: Any = clone(model_spec)
         model.fit(X_train_full, y_train_full)
         models[model_name] = model
 
@@ -332,17 +408,17 @@ def train_satisfaction_models(
                     "recall_low_satisfaction"
                 ],
                 "f1_high_satisfaction": f1_score(
-                    y_test, predictions, pos_label=1, zero_division=0
+                    y_test, predictions, pos_label=1, zero_division=0  # type: ignore[call-overload]
                 ),
                 "f1_low_satisfaction": f1_score(
-                    y_test, predictions, pos_label=0, zero_division=0
+                    y_test, predictions, pos_label=0, zero_division=0  # type: ignore[call-overload]
                 ),
-                "f1_macro": f1_score(y_test, predictions, average="macro", zero_division=0),
+                "f1_macro": f1_score(y_test, predictions, average="macro", zero_division=0),  # type: ignore[call-overload]
                 "precision_low_satisfaction": precision_score(
-                    y_test, predictions, pos_label=0, zero_division=0
+                    y_test, predictions, pos_label=0, zero_division=0  # type: ignore[call-overload]
                 ),
                 "recall_low_satisfaction": recall_score(
-                    y_test, predictions, pos_label=0, zero_division=0
+                    y_test, predictions, pos_label=0, zero_division=0  # type: ignore[call-overload]
                 ),
                 "roc_auc": roc_auc_score(y_test, high_prob),
             }
@@ -362,7 +438,7 @@ def train_satisfaction_models(
             pd.DataFrame(
                 {
                     "model": model_name,
-                    "actual_high_satisfaction": y_test.to_numpy(),
+                    "actual_high_satisfaction": np.asarray(y_test),
                     "predicted_high_satisfaction": predictions,
                     "predicted_low_satisfaction": 1 - predictions,
                     "decision_threshold": decision_threshold,
@@ -423,11 +499,12 @@ def compute_shap_artifacts(
     if isinstance(shap_values, list):
         shap_values = shap_values[-1]
 
-    shap_frame = pd.DataFrame(shap_values, columns=sample.columns, index=sample.index)
+    shap_array = np.asarray(shap_values)
+    shap_frame = pd.DataFrame(shap_array, columns=sample.columns, index=sample.index)
     direction_rows = []
     for feature_name in sample.columns:
-        feature_values = sample[feature_name]
-        feature_shap = shap_frame[feature_name]
+        feature_values: pd.Series = sample[feature_name]  # type: ignore[assignment]
+        feature_shap: pd.Series = shap_frame[feature_name]  # type: ignore[assignment]
 
         if feature_values.nunique() <= 1 or feature_shap.nunique() <= 1:
             correlation = np.nan
@@ -505,7 +582,7 @@ def score_cluster_counts(
 
     rows = []
     for n_clusters in candidate_k:
-        model = KMeans(n_clusters=n_clusters, n_init=20, random_state=random_state)
+        model = KMeans(n_clusters=n_clusters, n_init=20, random_state=random_state)  # type: ignore[call-overload]
         labels = model.fit_predict(scaled)
         rows.append(
             {
@@ -566,7 +643,7 @@ def fit_customer_segments(
     scaler = StandardScaler()
     scaled_values = scaler.fit_transform(cluster_df[cluster_features])
 
-    kmeans = KMeans(n_clusters=n_clusters, n_init=20, random_state=random_state)
+    kmeans = KMeans(n_clusters=n_clusters, n_init=20, random_state=random_state)  # type: ignore[call-overload]
     cluster_df["segment"] = kmeans.fit_predict(scaled_values)
 
     profile = (
@@ -883,10 +960,10 @@ def train_vip_weighted_xgboost(
         {
             "model_variant": "VIP-weighted XGBoost",
             "decision_threshold": best_threshold,
-            "f1_low_satisfaction": f1_score(y_test, test_pred, pos_label=0, zero_division=0),
-            "recall_low_satisfaction": recall_score(y_test, test_pred, pos_label=0, zero_division=0),
+            "f1_low_satisfaction": f1_score(y_test, test_pred, pos_label=0, zero_division=0),  # type: ignore[call-overload]
+            "recall_low_satisfaction": recall_score(y_test, test_pred, pos_label=0, zero_division=0),  # type: ignore[call-overload]
             "precision_low_satisfaction": precision_score(
-                y_test, test_pred, pos_label=0, zero_division=0
+                y_test, test_pred, pos_label=0, zero_division=0  # type: ignore[call-overload]
             ),
             "roc_auc": roc_auc_score(y_test, test_prob),
         }
@@ -1052,13 +1129,15 @@ def prepare_intervention_payload(
     payload = intervention_candidates[available_cols].copy()
 
     if "delivery_delta" in payload.columns:
-        payload["delay_days"] = payload["delivery_delta"].abs().round(0).astype(int)
+        _delta: pd.Series = payload["delivery_delta"]  # type: ignore[assignment]
+        payload["delay_days"] = _delta.abs().round(0).astype(int)
 
     payload["risk_pct"] = (payload["predicted_low_probability"] * 100).round(1)
 
     if "total_order_value" in payload.columns:
-        q1 = payload["total_order_value"].quantile(0.33)
-        q2 = payload["total_order_value"].quantile(0.66)
+        _order_val: pd.Series = payload["total_order_value"]  # type: ignore[assignment]
+        q1 = float(_order_val.quantile(0.33))
+        q2 = float(_order_val.quantile(0.66))
         payload["value_tier"] = np.select(
             [payload["total_order_value"] >= q2, payload["total_order_value"] >= q1],
             ["high", "medium"],
@@ -1079,7 +1158,7 @@ def prepare_intervention_payload(
 
     payload["campaign_reason"] = "late_delivery_high_risk"
     payload["apology_style"] = np.where(payload["value_tier"] == "high", "white_glove", "standard")
-    payload = payload.sort_values("predicted_low_probability", ascending=False).reset_index(drop=True)
+    payload = payload.sort_values(by="predicted_low_probability", ascending=False).reset_index(drop=True)  # type: ignore[call-overload]
 
     exported_to = None
     if output_path is not None:
@@ -1092,3 +1171,51 @@ def prepare_intervention_payload(
         "payload": payload,
         "exported_to": exported_to,
     }
+
+
+def save_model_artifacts(
+    ml_results: dict[str, Any],
+    output_dir: str | Path = "outputs/model",
+) -> dict[str, str]:
+    """Persist trained models and key tables to disk for downstream use."""
+
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    saved_paths: dict[str, str] = {}
+
+    dataframe_payload = {
+        "metrics": ml_results.get("metrics"),
+        "risk_table": ml_results.get("risk_table"),
+        "segment_profile": ml_results.get("segment_profile"),
+        "predictions": ml_results.get("predictions"),
+    }
+    for name, payload in dataframe_payload.items():
+        if isinstance(payload, pd.DataFrame):
+            path = target_dir / f"{name}.csv"
+            payload.to_csv(path, index=False)
+            saved_paths[name] = str(path)
+
+    training = ml_results.get("training", {})
+    if isinstance(training, dict):
+        models = training.get("models", {})
+        if isinstance(models, dict):
+            for model_name, model_obj in models.items():
+                slug = model_name.lower().replace(" ", "_")
+                path = target_dir / f"model_{slug}.pkl"
+                with path.open("wb") as model_file:
+                    pickle.dump(model_obj, model_file)
+                saved_paths[f"model_{slug}"] = str(path)
+
+    roc_figure = ml_results.get("roc_figure")
+    if roc_figure is not None and hasattr(roc_figure, "write_html"):
+        roc_path = target_dir / "roc_curves.html"
+        roc_figure.write_html(str(roc_path))
+        saved_paths["roc_figure"] = str(roc_path)
+
+    segment_figure = ml_results.get("segment_figure")
+    if segment_figure is not None and hasattr(segment_figure, "write_html"):
+        segment_path = target_dir / "segment_profile_heatmap.html"
+        segment_figure.write_html(str(segment_path))
+        saved_paths["segment_figure"] = str(segment_path)
+
+    return saved_paths

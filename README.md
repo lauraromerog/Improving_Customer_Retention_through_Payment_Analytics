@@ -5,37 +5,39 @@
 
 ## Overview
 
-This project investigates whether **payment behavior** (specifically payment method and number of installments) influences **customer satisfaction** and **delivery experience** in the Olist Brazilian e-commerce ecosystem.
+This project investigates whether **payment behaviour** (payment method and number of installments) influences **customer satisfaction** and **delivery experience** in the Olist Brazilian e-commerce ecosystem.
 
-The analysis spans the full data science pipeline: from exploratory analysis and feature engineering, to machine learning classification and a GenAI-powered automated customer recovery agent.
+The analysis spans the full data science pipeline: from exploratory analysis and feature engineering, to machine learning classification, an interactive BI dashboard, and a GenAI-powered automated customer recovery agent.
 
-> **Business question:** Can we predict which customers are at risk of churning based on how they pay — and automatically intervene with a personalized recovery message?
+> **Business question:** Can we predict which customers are at risk of churning based on how they pay — and automatically intervene with a personalised recovery message?
 
 ---
 
 ## Project Structure
 
 ```
-olist-payment-analytics/
-│
-├── data/                          # Downloaded automatically via kagglehub (not tracked in git)
+Improving_Customer_Retention_through_Payment_Analytics/
 │
 ├── notebooks/
-│   └── olist_payment_analytics.ipynb   # Main analysis notebook
+│   ├── olist_payment_analytics.ipynb        # Main analysis notebook
+│   └── outputs/intervention/
+│       └── intervention_payload_high_risk_late.csv
 │
 ├── src/
-│   ├── __init__.py               # Public exports for reusable project utilities
-│   ├── data_loader.py             # Dataset loading & merging utilities
-│   ├── feature_engineering.py     # Feature creation (delivery_delta, etc.)
-│   ├── model.py                   # ML training & evaluation
-│   └── email_agent.py             # GenAI customer recovery agent
+│   ├── __init__.py                          # Public API exports
+│   ├── data_loader.py                       # Dataset loading & merging utilities
+│   ├── feature_engineering.py               # Feature creation (delivery_delta, etc.)
+│   └── model.py                             # ML training, evaluation & segmentation
 │
 ├── outputs/
-│   ├── figures/                   # Saved EDA charts
-│   └── model/                     # Saved model artifacts
+│   └── model/                               # Saved artifacts (metrics, predictions, models)
+│       ├── metrics.csv
+│       ├── predictions.csv
+│       ├── risk_table.csv
+│       └── segment_profile.csv
 │
+├── dashboard.py                             # Interactive Dash BI dashboard
 ├── README.md
-├── requirements.txt
 └── environment.yml
 ```
 
@@ -45,7 +47,7 @@ olist-payment-analytics/
 
 **Source:** [Olist Brazilian E-Commerce — Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
 
-The dataset contains ~100k real anonymized orders placed on the Olist marketplace between 2016 and 2018. Seven tables are joined to build the analytical dataset:
+~100k real anonymised orders placed on the Olist marketplace between 2016 and 2018. Seven tables are joined to build the analytical dataset:
 
 | Table | Purpose |
 |---|---|
@@ -63,7 +65,7 @@ The dataset contains ~100k real anonymized orders placed on the Olist marketplac
 
 ### 1. Data Strategy
 
-Tables are joined on `order_id` and `customer_id` to build a single flat analytical dataframe. Payment records are aggregated per order (dominant payment type, total installments, total payment value).
+Tables are joined on `order_id` and `customer_id` to produce a single flat analytical dataframe. Payment records are aggregated per order (dominant payment type, total installments, total payment value).
 
 ### 2. Feature Engineering
 
@@ -78,51 +80,85 @@ Tables are joined on `order_id` and `customer_id` to build a single flat analyti
 
 ### 3. Exploratory Data Analysis
 
-All EDA is done in Python using **Plotly** for interactive visualizations:
+All EDA uses **Plotly** for interactive visualisations (available both in the notebook and the live dashboard):
 
-- **Installment distribution by product category** — bar chart of most common installment counts per category
-- **Brazil payment method map** — choropleth by state showing dominant payment type (credit card / boleto / voucher)
-- **Correlation matrix** — numeric features including installments, order value, delivery delta, and review score
-- **Review score by payment type** — violin/box plot as direct evidence for the core hypothesis
-- **Satisfaction trend over time** — average review score by month, split by payment type (2016–2018)
+- **Installment distribution by product category**
+- **Payment method share by state** (choropleth)
+- **Correlation matrix** — numeric features including installments, order value, delivery delta, and review score (`delivery_speed_days` now included)
+- **Review score by payment type** — violin plot
+- **Satisfaction trend over time** — average review score by month split by payment type
 
 ### 4. Machine Learning
 
 **Target variable:** Binary satisfaction label — `high` (4–5 stars) vs `low` (1–3 stars)
 
-**Input features:** `payment_type` (one-hot), `payment_installments`, `total_price`, `total_freight`, `delivery_delta`, `is_late`, `total_order_value`, `customer_lifetime_orders`
+**Feature scope options:**
 
-Two feature scopes are supported in code:
-
-- `post_delivery` for post-purchase recovery targeting, where delivery outcome features such as `delivery_delta` and `is_late` are allowed
-- `pre_delivery` for earlier prediction without delivery leakage
+| Scope | Features | Use case |
+|---|---|---|
+| `post_delivery` | All features incl. `delivery_delta`, `delivery_speed_days`, `is_late` | Post-purchase recovery targeting |
+| `pre_delivery` | Payment and order-value features only | Earlier risk prediction, no delivery leakage |
 
 **Models trained:**
 
 | Model | Role |
 |---|---|
-| Logistic Regression | Interpretable baseline |
-| Random Forest | Ensemble benchmark |
-| XGBoost | Primary model |
+| Logistic Regression | Interpretable baseline, `class_weight="balanced"` |
+| Random Forest | Ensemble benchmark, `class_weight="balanced_subsample"` |
+| XGBoost | Primary model — regularised, with `scale_pos_weight` |
 
-**Evaluation:** AUC-ROC plus threshold-tuned F1, with model ranking driven by **low-satisfaction F1** and recall rather than raw accuracy. The decision threshold is tuned on a validation split to improve detection of at-risk customers.
+**XGBoost improvements (latest version):**
 
-**Interpretability:** SHAP values are used to show the directional impact of each feature on predicted satisfaction, going beyond a simple feature importance bar chart.
+The XGBoost configuration was upgraded to reduce overfitting on noisy order-level data and to handle class imbalance natively, consistent with how sklearn estimators use `class_weight="balanced"`:
 
-**Customer segmentation:** K-Means clustering on payment and delivery behavior to identify distinct customer risk profiles (e.g., high-value reliable payers, installment-heavy late-delivery risk).
+- `max_depth` reduced from 5 → 4
+- Added `min_child_weight=10` (prevents splits on very small leaf nodes)
+- Added `gamma=0.1` (minimum gain required to make a split)
+- Added `reg_alpha=0.1`, `reg_lambda=2.0` (L1/L2 regularisation)
+- `scale_pos_weight` is now computed automatically from the training class distribution (`n_low_satisfaction / n_high_satisfaction`)
+- `delivery_speed_days` added to `POST_DELIVERY_NUMERIC_FEATURES` (previously missing)
 
-**Risk output:** The workflow also produces a ranked customer/order risk table with predicted low-satisfaction probability and risk bands (`low`, `medium`, `high`) for downstream retention actions.
+**Evaluation:** AUC-ROC plus threshold-tuned F1, with model ranking driven by **low-satisfaction F1** and recall rather than raw accuracy. The decision threshold is tuned on a held-out validation split to improve detection of at-risk customers.
 
-**Cost-sensitive variant:** The project now includes a reusable VIP-weighted XGBoost training utility (`train_vip_weighted_xgboost`) that applies `sample_weight` to prioritize high-value segments and reduce expensive false negatives.
+**Cross-validation:** `compute_cv_metrics()` runs stratified 5-fold CV for all three models and reports mean ± std for AUC, low-satisfaction F1, recall, and precision. Use this alongside `train_satisfaction_models()` to confirm that hold-out results generalise across folds.
+
+**Interpretability:** SHAP values (via `compute_shap_artifacts()`) show the directional impact of each feature on predicted satisfaction.
+
+**Customer segmentation:** K-Means clustering on payment and delivery behaviour identifies distinct risk profiles (e.g., high-value reliable payers, installment-heavy late-delivery risk). Optimal K is selected using a silhouette score sweep (`score_cluster_counts()`).
+
+**Risk output:** A ranked customer/order risk table with predicted low-satisfaction probability and risk bands (`low`, `medium`, `high`) for downstream retention actions.
+
+**Cost-sensitive variant:** `train_vip_weighted_xgboost()` applies `sample_weight` to prioritise high-value segments and reduce expensive false negatives.
 
 **Operational outputs:**
 
-- `build_revenue_at_risk_table` + `build_revenue_at_risk_map` to prioritize states where high-value late deliveries concentrate.
-- `prepare_intervention_payload` to export enriched email-agent input with personalization fields (including product category, delay metrics, value tier, risk %, and recommended coupon).
+- `build_revenue_at_risk_table()` + `build_revenue_at_risk_map()` — state-level revenue concentration for high-value late deliveries.
+- `prepare_intervention_payload()` — enriched email-agent input with personalisation fields (product category, delay metrics, value tier, risk %, recommended coupon %).
 
-### 5. GenAI Customer Recovery Agent
+### 5. Interactive Dashboard
 
-For orders classified as **high churn risk** by the ML model, a personalized recovery email is generated using the Anthropic API. The prompt is dynamically constructed from the customer's order data and historical spend, with the discount tier tied directly to the model's churn risk score.
+Run the Dash BI dashboard locally:
+
+```bash
+python dashboard.py
+# Opens at http://localhost:8050
+```
+
+**Tabs:**
+
+| Tab | Contents |
+|---|---|
+| Overview | Top categories by median installments; payment method share by state |
+| Payment Behaviour | Installment distribution; full correlation matrix (incl. `delivery_speed_days`) |
+| Delivery & Satisfaction | Late-delivery choropleth; review score violin; delivery delta box; late-rate bar |
+| Trends | Avg review score and avg order value over time by payment method |
+| Risk Overview | Model performance table; risk-band distribution; high-risk orders by state; segment heatmap — loaded automatically from `outputs/model/` if the ML workflow has been run |
+
+All tabs respond to the **State**, **Payment**, and **Year** filter controls in the header.
+
+### 6. GenAI Customer Recovery Agent
+
+For orders classified as **high churn risk**, a personalised recovery email is generated using the Anthropic API. The prompt is dynamically constructed from the customer's order data and historical spend, with the discount tier tied to the model's churn risk score.
 
 **Example output:**
 > *Hello Maria, we noticed your order — paid via credit card in 10 installments — was delivered 4 days later than expected. As a valued customer from São Paulo with 6 previous orders, we'd like to offer you a 20% discount on your next purchase. We're sorry for the inconvenience.*
@@ -135,20 +171,20 @@ For orders classified as **high churn risk** by the ML model, a personalized rec
 
 ```bash
 conda env create -f environment.yml
-conda activate olist-analytics
+conda activate project-env
 jupyter notebook
 ```
 
 ### Option B — pip
 
 ```bash
-pip install -r requirements.txt
+pip install pandas numpy scikit-learn xgboost shap plotly dash kagglehub anthropic
 jupyter notebook
 ```
 
 ### Kaggle credentials
 
-The notebook downloads the dataset automatically via `kagglehub`. You will need a Kaggle account and your API credentials placed at `~/.kaggle/kaggle.json`:
+The notebook downloads the dataset automatically via `kagglehub`. Place your API credentials at `~/.kaggle/kaggle.json`:
 
 ```json
 {"username": "your_username", "key": "your_api_key"}
@@ -168,18 +204,16 @@ export OPENAI_API_KEY="your_key_here"
 
 ## Key Findings
 
-Latest notebook run (src workflow) produced the following results:
+Latest notebook run (full `src` workflow):
 
-- **Best classifier:** XGBoost ranked first for low-satisfaction detection (`f1_low_satisfaction=0.422`, `recall_low_satisfaction=0.461`, `roc_auc=0.678`) with a tuned decision threshold of `0.79`.
-- **Risk concentration:** Most orders are low risk, but a meaningful at-risk group exists: `89,958` low-risk, `1,507` medium-risk, and `4,358` high-risk orders.
-- **Top retention target segment:** Segment `1` (`late-delivery risk | satisfaction risk`) shows the highest low-satisfaction rate at about `65.6%` across `7,604` orders.
-- **Most influential model drivers (SHAP):** `delivery_delta`, `total_freight`, and `is_late` are among the strongest predictors, indicating delivery performance has a larger impact than payment dummies alone.
-- **Payment behavior signal:** Payment-related features (installments and payment-method dummies) contribute to prediction, but with smaller effect size than delivery-related variables.
-- **VIP-weighted training improved business risk handling:** compared to baseline XGBoost, low-satisfaction recall increased (`0.461 -> 0.485`) and VIP false-negative revenue decreased (`126,369.57 -> 120,304.93`).
-- **Revenue-at-risk map surfaced code-red geographies for high-value late deliveries:** in the latest run, the largest revenue-at-risk concentrations were in `SP` and `RJ`.
-- **Intervention export is production-ready:** `4,358` high-risk delayed-shipping orders were exported to `outputs/intervention/intervention_payload_high_risk_late.csv` with personalization metadata for the email agent.
-
-Note: state-level late-delivery rankings are available in the interactive dashboard section of the notebook and can be exported as a separate table if needed.
+- **Best classifier:** XGBoost ranked first for low-satisfaction detection (`f1_low_satisfaction=0.422`, `recall_low_satisfaction=0.461`, `roc_auc=0.678`) with a tuned decision threshold of `0.79`. Updated regularisation and `scale_pos_weight` calibration are expected to improve these figures on the next full run.
+- **Risk concentration:** `89,958` low-risk, `1,507` medium-risk, and `4,358` high-risk orders.
+- **Top retention target segment:** Segment `1` (`late-delivery risk | satisfaction risk`) — ~65.6% low-satisfaction rate across `7,604` orders.
+- **Most influential model drivers (SHAP):** `delivery_delta`, `total_freight`, and `is_late` are the strongest predictors. Delivery performance has a larger impact than payment dummies alone.
+- **Payment behaviour signal:** Payment features (installments, payment-method dummies) contribute to prediction but with smaller effect size than delivery variables.
+- **VIP-weighted training improved business risk handling:** low-satisfaction recall increased `0.461 → 0.485`; VIP false-negative revenue decreased `$126,370 → $120,305`.
+- **Revenue-at-risk map:** Largest concentrations in `SP` (São Paulo) and `RJ` (Rio de Janeiro).
+- **Intervention export:** `4,358` high-risk delayed-shipping orders exported to `outputs/intervention/intervention_payload_high_risk_late.csv` with full personalisation metadata.
 
 ---
 
@@ -187,17 +221,18 @@ Note: state-level late-delivery rankings are available in the interactive dashbo
 
 | Layer | Tools |
 |---|---|
-| Data manipulation | `pandas`, `numpy`, `pandasql` |
-| Visualization | `plotly`, `seaborn` |
+| Data manipulation | `pandas`, `numpy` |
+| Visualisation | `plotly`, `seaborn` |
 | Machine learning | `scikit-learn`, `xgboost`, `shap` |
+| Dashboarding | `dash` |
 | GenAI | `anthropic` |
-| Environment | `conda`, `jupyter` |
+| Environment | `conda`, `jupyter`, Python 3.11 |
 
 ---
 
 ## Author
 
-**Laura Romero**
+**Laura Romero**  
 [LinkedIn](https://www.linkedin.com/in/laura-romero-gonzalez) · [GitHub](https://github.com/lauraromerog)
 
 ---
