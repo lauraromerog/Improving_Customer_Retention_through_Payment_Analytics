@@ -1,0 +1,58 @@
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env/
+
+# ── Python bytecode ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+# Keep notebooks tracked but strip outputs on commit if desired:
+# *.ipynb  ← uncomment to ignore notebooks entirely
+
+# ── Dataset (downloaded automatically via kagglehub) ─────────────────────────
+data/
+
+# ── Model artifacts (large binaries + generated CSVs) ────────────────────────
+outputs/model/*.pkl
+outputs/model/risk_table.csv
+outputs/model/predictions.csv
+
+# Keep the small summary files so reviewers see results without re-running:
+# outputs/model/metrics.csv        ← tracked
+# outputs/model/segment_profile.csv ← tracked
+
+# ── Generated HTML figures ────────────────────────────────────────────────────
+outputs/figures/
+outputs/model/*.html
+
+# ── Intervention export (large, PII-adjacent) ────────────────────────────────
+notebooks/outputs/
+
+# ── Kaggle credentials ────────────────────────────────────────────────────────
+kaggle.json
+.kaggle/
+
+# ── API keys / secrets ────────────────────────────────────────────────────────
+.env
+*.env
+secrets.py
+
+# ── OS noise ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE / editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ── Pyright / type-checker cache ─────────────────────────────────────────────
+.pyright/
+pyrightconfig.json
