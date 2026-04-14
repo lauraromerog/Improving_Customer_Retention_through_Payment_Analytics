@@ -53,3 +53,6 @@ desktop.ini
 # ── Pyright / type-checker cache ─────────────────────────────────────────────
 .pyright/
 pyrightconfig.json
+
+#environment
+environment.yml
