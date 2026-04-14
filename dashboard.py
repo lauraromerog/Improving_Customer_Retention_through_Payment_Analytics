@@ -406,7 +406,9 @@ def update_dashboard(selected_states, payment_types, years, tab):
             "is_late",
             "review_score",
             "customer_lifetime_orders",
+            "review_sentiment",
         ]
+        corr_cols = [c for c in corr_cols if c in data.columns]
         corr_matrix = data[corr_cols].corr().round(2)
         mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
         fig_corr = px.imshow(

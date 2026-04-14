@@ -22,6 +22,7 @@ DEFAULT_ML_FEATURES = [
     "is_late",
     "total_order_value",
     "customer_lifetime_orders",
+    "review_sentiment",
 ]
 
 
@@ -72,6 +73,27 @@ def add_eda_time_and_labels(
     return enriched
 
 
+def add_review_sentiment(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute TextBlob sentiment polarity from review_comment_message.
+
+    Fills 0.0 for rows where the message is null or empty.
+    Falls back to 0.0 for all rows if textblob is not installed.
+    """
+    try:
+        from textblob import TextBlob  # type: ignore[import-not-found]
+    except ImportError:
+        enriched = df.copy()
+        enriched["review_sentiment"] = 0.0
+        return enriched
+
+    enriched = df.copy()
+    texts: pd.Series = enriched.get("review_comment_message", pd.Series(dtype=str)).fillna("")  # type: ignore[assignment]
+    enriched["review_sentiment"] = texts.map(
+        lambda t: TextBlob(str(t)).sentiment.polarity if t else 0.0
+    )
+    return enriched
+
+
 def build_feature_engineered_dataset(
     df: pd.DataFrame,
     add_dummies: bool = True,
@@ -86,6 +108,7 @@ def build_feature_engineered_dataset(
     if add_target:
         engineered = add_satisfaction_target(engineered)
     engineered = add_eda_time_and_labels(engineered)
+    engineered = add_review_sentiment(engineered)
     return engineered
 
 
