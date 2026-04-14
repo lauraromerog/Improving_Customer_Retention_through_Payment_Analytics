@@ -31,10 +31,6 @@ outputs/model/predictions.csv
 outputs/figures/
 outputs/model/*.html
 
-# ── Intervention export (large, PII-adjacent) ────────────────────────────────
-notebooks/outputs/**
-!notebooks/outputs/intervention/intervention_payload_high_risk_late.csv
-
 # ── Kaggle credentials ────────────────────────────────────────────────────────
 kaggle.json
 .kaggle/
