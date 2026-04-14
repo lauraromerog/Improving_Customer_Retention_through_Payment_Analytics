@@ -106,7 +106,7 @@ def deduplicate_reviews(reviews: pd.DataFrame) -> pd.DataFrame:
     return (
         reviews.sort_values("review_creation_date", ascending=False)
         .drop_duplicates(subset="order_id", keep="first")
-        [["order_id", "review_score", "review_creation_date"]]
+        [["order_id", "review_score", "review_creation_date", "review_comment_message"]]
     )
 
 

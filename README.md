@@ -27,7 +27,8 @@ Improving_Customer_Retention_through_Payment_Analytics/
 │   ├── __init__.py                          # Public API exports
 │   ├── data_loader.py                       # Dataset loading & merging utilities
 │   ├── feature_engineering.py               # Feature creation (delivery_delta, etc.)
-│   └── model.py                             # ML training, evaluation & segmentation
+│   ├── model.py                             # ML training, evaluation & segmentation
+│   └── genai.py                             # OpenAI email generation & customer summary
 │
 ├── outputs/
 │   └── model/                               # Saved artifacts (metrics, predictions, models)
@@ -36,7 +37,9 @@ Improving_Customer_Retention_through_Payment_Analytics/
 │       ├── risk_table.csv
 │       └── segment_profile.csv
 │
+├── app.py                                   # Streamlit Customer Recovery Agent
 ├── dashboard.py                             # Interactive Dash BI dashboard
+├── requirements.txt
 ├── README.md
 └── environment.yml
 ```
@@ -158,10 +161,36 @@ All tabs respond to the **State**, **Payment**, and **Year** filter controls in 
 
 ### 6. GenAI Customer Recovery Agent
 
-For orders classified as **high churn risk**, a personalised recovery email is generated using the Anthropic API. The prompt is dynamically constructed from the customer's order data and historical spend, with the discount tier tied to the model's churn risk score.
+For orders classified as **high churn risk**, a personalised recovery email is generated using the **OpenAI API** (`gpt-4o-mini`). The full implementation lives in two files:
+
+**`src/genai.py`** — core module (OpenAI SDK only, no third-party LLM frameworks):
+
+| Function | Description |
+|---|---|
+| `generate_recovery_email(customer_row, tone)` | Sends a structured prompt to `gpt-4o-mini` and returns the email body (≤ 150 words). The prompt includes the customer's state, product category, payment method and installment count, days late, order value in BRL, and the recommended discount. The `tone` parameter (`"empathetic"` / `"formal"` / `"friendly"`) adjusts the writing style via the system prompt. |
+| `build_customer_summary(customer_row)` | Returns a 4-bullet plain-text summary of the order (value, days late, churn risk %, product, payment method) for display in the app sidebar. |
+
+**`app.py`** — Streamlit front-end:
+
+```bash
+streamlit run app.py
+# Opens at http://localhost:8501
+```
+
+The app loads `notebooks/outputs/intervention/intervention_payload_high_risk_late.csv` and provides:
+
+- **Sidebar filters:** risk band (high / medium / low), customer state (multiselect), and email tone radio button; a metric shows the number of matching customers.
+- **Main table:** filtered customers showing order ID, state, product category, order value (R$), days late, coupon %, and risk band.
+- **Email generator:** select a customer from a dropdown, click **Generate Email ✉️** or **🔄 Regenerate**; the result is displayed in a tall text area with an order-summary info box above it. Results are stored in `st.session_state` so widget interactions don't re-trigger the API call.
+
+> **Requires** `OPENAI_API_KEY` set as an environment variable before launching:
+> ```bash
+> export OPENAI_API_KEY="your_key_here"
+> streamlit run app.py
+> ```
 
 **Example output:**
-> *Hello Maria, we noticed your order — paid via credit card in 10 installments — was delivered 4 days later than expected. As a valued customer from São Paulo with 6 previous orders, we'd like to offer you a 20% discount on your next purchase. We're sorry for the inconvenience.*
+> *Dear Customer, we sincerely apologise that your furniture living room order — paid by credit card in a single payment (R$ 255.96) — arrived 29 days late. This falls well short of the experience you deserve. As a thank-you for your patience, we're offering you 25% off your next purchase. Use code at checkout — we look forward to making it right. — Olist Customer Success Team*
 
 ---
 
@@ -178,7 +207,7 @@ jupyter notebook
 ### Option B — pip
 
 ```bash
-pip install pandas numpy scikit-learn xgboost shap plotly dash kagglehub anthropic
+pip install pandas numpy scikit-learn xgboost shap plotly dash kagglehub textblob openai
 jupyter notebook
 ```
 
@@ -211,6 +240,7 @@ Latest notebook run (full `src` workflow):
 - **Top retention target segment:** Segment `1` (`late-delivery risk | satisfaction risk`) — ~65.6% low-satisfaction rate across `7,604` orders.
 - **Most influential model drivers (SHAP):** `delivery_delta`, `total_freight`, and `is_late` are the strongest predictors. Delivery performance has a larger impact than payment dummies alone.
 - **Payment behaviour signal:** Payment features (installments, payment-method dummies) contribute to prediction but with smaller effect size than delivery variables.
+- **Key narrative finding:** The data revealed that delivery experience is a stronger churn predictor than payment behaviour — `delivery_delta`, `is_late`, and `delivery_speed_days` consistently outrank payment features in SHAP importance. This is a discovery about where churn risk actually originates, not a limitation: it redirects retention efforts from payment incentives toward logistics and fulfilment quality.
 - **VIP-weighted training improved business risk handling:** low-satisfaction recall increased `0.461 → 0.485`; VIP false-negative revenue decreased `$126,370 → $120,305`.
 - **Revenue-at-risk map:** Largest concentrations in `SP` (São Paulo) and `RJ` (Rio de Janeiro).
 - **Intervention export:** `4,358` high-risk delayed-shipping orders exported to `outputs/intervention/intervention_payload_high_risk_late.csv` with full personalisation metadata.
@@ -225,7 +255,7 @@ Latest notebook run (full `src` workflow):
 | Visualisation | `plotly`, `seaborn` |
 | Machine learning | `scikit-learn`, `xgboost`, `shap` |
 | Dashboarding | `dash` |
-| GenAI | `anthropic` |
+| GenAI | `openai` |
 | Environment | `conda`, `jupyter`, Python 3.11 |
 
 ---

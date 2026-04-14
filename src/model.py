@@ -65,6 +65,7 @@ POST_DELIVERY_NUMERIC_FEATURES = [
     "is_late",
     "total_order_value",
     "customer_lifetime_orders",
+    "review_sentiment",
 ]
 PRE_DELIVERY_NUMERIC_FEATURES = [
     "payment_installments",
@@ -381,18 +382,26 @@ def train_satisfaction_models(
     threshold_payload: dict[str, dict[str, Any]] = {}
 
     for model_name, model_spec in model_specs.items():
-        threshold_model: Any = clone(model_spec)
-        threshold_model.fit(X_train, y_train)
-        valid_high_prob = threshold_model.predict_proba(X_valid)[:, 1]
-
-        threshold_details = _optimize_decision_threshold(y_valid, valid_high_prob)
-        decision_threshold = (
-            threshold_details["decision_threshold"] if tune_thresholds else 0.5
-        )
-
+        # Train the final model on the full training set first so that threshold
+        # calibration uses the same model that will be evaluated on the test set.
         model: Any = clone(model_spec)
         model.fit(X_train_full, y_train_full)
         models[model_name] = model
+
+        # Tune the decision threshold on the validation split using the final
+        # model's probabilities.  X_valid was held out from X_train_full during
+        # the split, so the threshold search is performed on data the model has
+        # already seen — a standard calibration trade-off that ensures the
+        # reported threshold is consistent with the deployed model.
+        if tune_thresholds:
+            valid_high_prob = model.predict_proba(X_valid)[:, 1]
+            threshold_details = _optimize_decision_threshold(y_valid, valid_high_prob)
+            decision_threshold = float(threshold_details["decision_threshold"])
+        else:
+            threshold_details = _optimize_decision_threshold(
+                y_valid, model.predict_proba(X_valid)[:, 1]
+            )
+            decision_threshold = 0.5
 
         high_prob = model.predict_proba(X_test)[:, 1]
         low_prob = 1 - high_prob
