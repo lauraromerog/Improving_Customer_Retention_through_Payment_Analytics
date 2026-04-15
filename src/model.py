@@ -485,7 +485,6 @@ def train_satisfaction_models(
         "y_test": y_test,
     }
 
-
 def compute_shap_artifacts(
     model: Any,
     X: pd.DataFrame,
