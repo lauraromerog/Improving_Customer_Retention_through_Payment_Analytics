@@ -383,7 +383,43 @@ def update_dashboard(selected_states, payment_types, years, tab):
         )
         fig_b.update_layout({**layout, "height": 360, "barmode": "stack", "xaxis_tickangle": -45})
 
-        return kpis, [chart_card(fig_a, span_full=True), chart_card(fig_b, span_full=True)]
+        review_counts = (
+            data["review_score"]
+            .value_counts()
+            .reindex([1, 2, 3, 4, 5])
+            .reset_index()
+        )
+        review_counts.columns = ["review_score", "count"]
+        review_counts["pct"] = review_counts["count"] / review_counts["count"].sum() * 100
+        review_counts["color"] = review_counts["review_score"].map({
+            1: BRAND_RED, 2: BRAND_ORANGE, 3: "#F5C842", 4: "#74C69D", 5: BRAND_GREEN,
+        })
+        fig_reviews = go.Figure(go.Bar(
+            x=review_counts["review_score"].astype(str),
+            y=review_counts["count"],
+            marker_color=review_counts["color"],
+            text=[f"{p:.1f}%" for p in review_counts["pct"]],
+            textposition="outside",
+            cliponaxis=False,
+        ))
+        fig_reviews.update_layout({
+            **layout,
+            "title": "Review Score Distribution",
+            "xaxis_title": "Stars",
+            "yaxis_title": "Orders",
+            "height": 340,
+            "showlegend": False,
+            "xaxis": {"fixedrange": True},
+            "yaxis": {"fixedrange": True},
+            "margin": dict(l=12, r=12, t=44, b=12),
+        })
+        fig_reviews.update_traces(marker_line_width=0)
+
+        return kpis, [
+            chart_card(fig_reviews),
+            chart_card(fig_a),
+            chart_card(fig_b, span_full=True),
+        ]
 
     # ── Payment Behaviour ───────────────────────────────────────────────────
     if tab == "tab-payment":
