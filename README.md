@@ -99,7 +99,8 @@ All EDA uses **Plotly** for interactive visualisations (available both in the no
 
 - **Installment distribution by product category**
 - **Payment method share by state** (choropleth)
-- **Correlation matrix** — numeric features including installments, order value, delivery delta, review score, and delivery speed
+- **Correlation with review_score** — standalone horizontal bar chart (Pearson r) for every numeric feature against `review_score`, colour-coded red/blue by direction; saved to `outputs/figures/correlation_review_score.png`
+- **Correlation matrix** — full lower-triangle heatmap of all numeric features
 - **Review score by payment type** — violin plot
 - **Satisfaction trend over time** — average review score by month split by payment type
 
@@ -123,7 +124,6 @@ All EDA uses **Plotly** for interactive visualisations (available both in the no
 | Logistic Regression | Interpretable baseline, `class_weight="balanced"` |
 | Random Forest | Ensemble benchmark, `class_weight="balanced_subsample"` |
 | XGBoost | Primary model — regularised, with `scale_pos_weight` |
-
 **XGBoost configuration:** `max_depth=4`, `min_child_weight=10`, `gamma=0.1`, `reg_alpha=0.1`, `reg_lambda=2.0`. `scale_pos_weight` is computed automatically from training class distribution.
 
 **Evaluation:** AUC-ROC plus threshold-tuned F1. Decision threshold tuned on a held-out validation split (sweep 0.20–0.81) to maximise low-satisfaction F1, then applied on the test set.
@@ -149,6 +149,8 @@ Run the Dash BI dashboard locally:
 python dashboard.py
 # Opens at http://localhost:8050
 ```
+
+Or launch it directly from the notebook by running the **"Launch the EDA Dashboard"** cell (inserted after the EDA figures cell). This starts `dashboard.py` as a background subprocess so the kernel stays interactive. Stop it with `_dashboard_proc.terminate()`.
 
 **Tabs:**
 
