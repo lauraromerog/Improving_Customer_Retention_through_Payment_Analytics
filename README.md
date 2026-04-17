@@ -28,6 +28,9 @@ The customer recovery agent is deployed on Streamlit Community Cloud:
 ```
 Improving_Customer_Retention_through_Payment_Analytics/
 │
+├── .devcontainer/
+│   └── devcontainer.json                    # GitHub Codespaces config — auto-installs deps & launches app.py
+│
 ├── notebooks/
 │   ├── olist_payment_analytics.ipynb        # Main analysis notebook
 │   └── outputs/intervention/
