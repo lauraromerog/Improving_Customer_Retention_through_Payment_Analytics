@@ -1,4 +1,4 @@
-# Improving Customer Retention through Payment Analytics
+# Improving Customer Retention for Olist Ecommerce Platform
 ### A Data Science & GenAI Project on the Brazilian E-Commerce Market
 
 ---
@@ -49,6 +49,7 @@ Improving_Customer_Retention_through_Payment_Analytics/
 │
 ├── app.py                                   # Streamlit Customer Recovery Agent
 ├── dashboard.py                             # Interactive Dash BI dashboard
+├── Improving_Customer_Retention.mp4         # Project presentation video
 ├── requirements.txt                         # Python dependencies for deployment
 └── README.md
 ```
@@ -97,6 +98,7 @@ Tables are joined on `order_id` and `customer_id` to produce a single flat analy
 
 All EDA uses **Plotly** for interactive visualisations (available both in the notebook and the live dashboard):
 
+- **Review score distribution** — bar chart showing count and percentage per star rating (1–5), colour-coded from red to green
 - **Installment distribution by product category**
 - **Payment method share by state** (choropleth)
 - **Correlation with review_score** — standalone horizontal bar chart (Pearson r) for every numeric feature against `review_score`, colour-coded red/blue by direction; saved to `outputs/figures/correlation_review_score.png`
@@ -124,6 +126,7 @@ All EDA uses **Plotly** for interactive visualisations (available both in the no
 | Logistic Regression | Interpretable baseline, `class_weight="balanced"` |
 | Random Forest | Ensemble benchmark, `class_weight="balanced_subsample"` |
 | XGBoost | Primary model — regularised, with `scale_pos_weight` |
+
 **XGBoost configuration:** `max_depth=4`, `min_child_weight=10`, `gamma=0.1`, `reg_alpha=0.1`, `reg_lambda=2.0`. `scale_pos_weight` is computed automatically from training class distribution.
 
 **Evaluation:** AUC-ROC plus threshold-tuned F1. Decision threshold tuned on a held-out validation split (sweep 0.20–0.81) to maximise low-satisfaction F1, then applied on the test set.
@@ -156,7 +159,7 @@ Or launch it directly from the notebook by running the **"Launch the EDA Dashboa
 
 | Tab | Contents |
 |---|---|
-| Overview | Top categories by median installments; payment method share by state |
+| Overview | Review score distribution; top categories by median installments; payment method share by state |
 | Payment Behaviour | Installment distribution; full correlation matrix |
 | Delivery & Satisfaction | Late-delivery choropleth; review score violin; delivery delta box; late-rate bar |
 | Trends | Avg review score and avg order value over time by payment method |
@@ -263,7 +266,7 @@ OPENAI_API_KEY = "your_key_here"
 |---|---|
 | Data manipulation | `pandas`, `numpy` |
 | NLP | `textblob` |
-| Visualisation | `plotly`, `seaborn` |
+| Visualisation | `plotly`, `matplotlib` |
 | Machine learning | `scikit-learn`, `xgboost`, `shap` |
 | Dashboarding | `dash` |
 | GenAI | `openai` (GPT-4o-mini) |

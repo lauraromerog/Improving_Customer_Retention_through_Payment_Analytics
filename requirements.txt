@@ -6,7 +6,7 @@ shap>=0.43.0
 plotly>=5.18.0
 dash>=2.14.0
 kagglehub>=0.1.0
-scipy>=1.11.0
+matplotlib>=3.7.0
 textblob
 openai>=1.0.0
 streamlit>=1.32.0
