@@ -13,6 +13,14 @@ The analysis spans the full data science pipeline: from exploratory analysis and
 
 ---
 
+## Presentation
+
+▶ **[Watch the project presentation](https://drive.google.com/file/d/1QIId3io7uQoxckcEW1gD8x6gDsWR1AJW/view?usp=sharing)**
+
+The full walkthrough covers the business problem, EDA findings, ML results, and live demo of the customer recovery agent. The video file (`Improving_Customer_Retention.mp4`) is also included in the repository root.
+
+---
+
 ## Live App
 
 The customer recovery agent is deployed on Streamlit Community Cloud:
